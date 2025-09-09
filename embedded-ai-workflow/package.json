@@ -1,0 +1,39 @@
+{
+  "name": "embedded-ai-workflow",
+  "displayName": "Embedded AI Workflow",
+  "description": "Visual workflow to generate STM32/ESP32 code with AI.",
+  "version": "0.0.1",
+  "publisher": "your-publisher",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.88.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:workflow.openPanel"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "workflow.openPanel",
+        "title": "Open Embedded AI Workflow",
+        "category": "Workflow"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "echo \"No lint configured\"",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.39",
+    "@types/vscode": "^1.88.0",
+    "typescript": "^5.4.5"
+  }
+}
