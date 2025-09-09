@@ -16,18 +16,27 @@ html, body {
 }
 
 #app {
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
 }
 
-.card {
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   background: var(--card);
-  border: 1px solid #1f2937;
-  padding: 24px 28px;
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-  text-align: center;
+  border-bottom: 1px solid #1f2937;
+  padding: 10px 12px;
+}
+
+.toolbar .spacer { flex: 1; }
+
+#editor {
+  flex: 1;
+  position: relative;
+  background: #0b1220;
+  border-top: 1px solid #0b1420;
 }
 
 h1 {
@@ -51,4 +60,8 @@ h1 {
 
 .button:hover {
   background: rgba(34,211,238,0.08);
+}
+
+.button.primary {
+  border-color: #10b981;
 }
