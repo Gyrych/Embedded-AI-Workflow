@@ -64,3 +64,16 @@ textarea#workflowJson {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
 }
+
+.panel.sidebar .button.node {
+  justify-self: stretch;
+}
+
+.select {
+  width: 100%;
+  background: #0b1220;
+  color: var(--text);
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
