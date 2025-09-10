@@ -52,3 +52,15 @@ h1 {
 .button:hover {
   background: rgba(34,211,238,0.08);
 }
+
+textarea#workflowJson {
+  width: 680px;
+  max-width: 90vw;
+  background: #0b1220;
+  color: var(--text);
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+}

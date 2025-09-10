@@ -22,7 +22,48 @@
         "title": "Open Embedded AI Workflow",
         "category": "Workflow"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Embedded AI Workflow",
+      "properties": {
+        "embedded-ai-workflow.ai.provider": {
+          "type": "string",
+          "enum": ["openai", "http"],
+          "default": "openai",
+          "description": "选择 AI 提供方：openai 或 http（自定义 HTTP 接口）。"
+        },
+        "embedded-ai-workflow.ai.openai.baseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "OpenAI API Base URL，可用于兼容第三方 OpenAI 接口。"
+        },
+        "embedded-ai-workflow.ai.openai.model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "OpenAI 模型名称。"
+        },
+        "embedded-ai-workflow.ai.openai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API Key（留空则读取环境变量 OPENAI_API_KEY）。"
+        },
+        "embedded-ai-workflow.ai.http.endpoint": {
+          "type": "string",
+          "default": "",
+          "description": "自定义 HTTP 生成接口地址（POST，body: { workflow }）。"
+        },
+        "embedded-ai-workflow.ai.http.apiKeyHeader": {
+          "type": "string",
+          "default": "Authorization",
+          "description": "自定义 HTTP 接口的 API Key 请求头名称。"
+        },
+        "embedded-ai-workflow.ai.http.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "自定义 HTTP 接口的 API Key 值。"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

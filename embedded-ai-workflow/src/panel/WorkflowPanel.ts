@@ -43,6 +43,22 @@ export class WorkflowPanel {
 		this.update();
 
 		this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+
+		this.panel.webview.onDidReceiveMessage(async (message) => {
+			try {
+				switch (message?.type) {
+					case 'generate-code': {
+						await this.handleGenerateCode(message?.workflow);
+						break;
+					}
+					default:
+						break;
+				}
+			} catch (error: any) {
+				this.postStatus('error', `生成失败: ${error?.message ?? String(error)}`);
+				vscode.window.showErrorMessage(`生成失败: ${error?.message ?? String(error)}`);
+			}
+		}, undefined, this.disposables);
 	}
 
 	public dispose() {
@@ -73,7 +89,7 @@ export class WorkflowPanel {
 		const nonce = getNonce();
 
 		return `<!DOCTYPE html>
-		<html lang="en">
+		<html lang="zh-CN">
 		<head>
 			<meta charset="UTF-8">
 			<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
@@ -83,12 +99,259 @@ export class WorkflowPanel {
 		</head>
 		<body>
 			<div id="app">
-				<h1>Hello Workflow</h1>
-				<p>This is a placeholder for the visual workflow editor.</p>
+				<div class="card">
+					<h1>Embedded AI Workflow</h1>
+					<p class="subtitle">粘贴/编辑工作流 JSON，点击“生成代码”</p>
+					<textarea id="workflowJson" rows="10" spellcheck="false">{
+			"nodes": [
+				{"id": 1, "type": "GPIO Out", "label": "LED"},
+				{"id": 2, "type": "Task", "label": "BlinkTask"}
+			],
+			"edges": [
+				{"from": 2, "to": 1}
+			]
+		}</textarea>
+					<div style="margin-top:12px; display:flex; gap:8px; justify-content:center;">
+						<button id="generate" class="button">生成代码</button>
+					</div>
+					<div id="status" style="margin-top:14px; text-align:left; max-width:680px;"></div>
+				</div>
 			</div>
 			<script nonce="${nonce}" src="${scriptUri}"></script>
 		</body>
 		</html>`;
+	}
+
+	private async handleGenerateCode(workflowJson: unknown) {
+		this.postStatus('info', '开始生成，正在调用 AI ...');
+		const workspaceRoot = this.getWorkspaceFolderUri();
+		if (!workspaceRoot) {
+			this.postStatus('error', '没有打开的工作区，无法写入生成结果。');
+			vscode.window.showErrorMessage('没有打开的工作区，无法写入生成结果。');
+			return;
+		}
+
+		let manifest = await this.generateWithAi(workflowJson);
+		if (!manifest || !Array.isArray(manifest.files)) {
+			this.postStatus('warn', 'AI 未返回有效清单，使用本地默认模板。');
+			manifest = this.generateMockManifest(workflowJson);
+		}
+
+		await this.writeGeneratedFiles(manifest);
+		this.postStatus('success', '生成完成，已写入工作区 generated/ 目录。');
+		vscode.window.showInformationMessage('代码生成完成，已写入 generated/');
+	}
+
+	private postStatus(level: 'info' | 'warn' | 'error' | 'success', text: string) {
+		this.panel.webview.postMessage({ type: 'status', level, text });
+	}
+
+	private getWorkspaceFolderUri(): vscode.Uri | undefined {
+		const folders = vscode.workspace.workspaceFolders;
+		return folders && folders.length > 0 ? folders[0].uri : undefined;
+	}
+
+	private async generateWithAi(workflowJson: unknown): Promise<{ files: { path: string; content: string }[] } | undefined> {
+		try {
+			const config = vscode.workspace.getConfiguration('embedded-ai-workflow');
+			const provider = String(config.get('ai.provider', 'openai'));
+			if (provider === 'openai') {
+				return await this.generateWithOpenAI(workflowJson);
+			}
+			if (provider === 'http') {
+				return await this.generateWithCustomHttp(workflowJson);
+			}
+			return await this.generateWithOpenAI(workflowJson);
+		} catch (error) {
+			this.postStatus('warn', `调用 AI 失败，使用默认模板。原因：${(error as any)?.message ?? String(error)}`);
+			return undefined;
+		}
+	}
+
+	private async generateWithOpenAI(workflowJson: unknown): Promise<{ files: { path: string; content: string }[] }> {
+		const config = vscode.workspace.getConfiguration('embedded-ai-workflow');
+		const baseUrl = String(config.get('ai.openai.baseUrl', 'https://api.openai.com/v1'));
+		const model = String(config.get('ai.openai.model', 'gpt-4o-mini'));
+		const apiKeyFromConfig = String(config.get('ai.openai.apiKey', ''));
+		const apiKey = apiKeyFromConfig || process.env.OPENAI_API_KEY || '';
+
+		if (!apiKey) {
+			throw new Error('未设置 OpenAI API Key');
+		}
+
+		const systemPrompt = [
+			'你是资深嵌入式工程师。根据用户提供的工作流 JSON，生成对应的 MCU 工程代码（例如 STM32 HAL C 代码）。',
+			'输出一个严格的 JSON 对象（不要包含 Markdown 代码块），格式：',
+			'{ "files": [ { "path": "src/main.c", "content": "..." }, ... ] }。',
+			'所有路径为相对路径，不要以斜杠开头。不要包含父级目录越界（..）。',
+			'将生成内容尽量最小可运行（例如 main.c、CMakeLists.txt 或 Makefile、README.md）。'
+		].join('\n');
+
+		const userPrompt = `工作流 JSON:\n${JSON.stringify(workflowJson, null, 2)}\n\n请基于该工作流生成一个 STM32 HAL C 的最小示例工程（LED 闪烁任务），返回严格 JSON（无 Markdown）。`;
+
+		const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+		const response = await fetch(url, {
+			method: 'POST',
+			headers: {
+				'Authorization': `Bearer ${apiKey}`,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				model,
+				temperature: 0.1,
+				response_format: { type: 'json_object' },
+				messages: [
+					{ role: 'system', content: systemPrompt },
+					{ role: 'user', content: userPrompt }
+				]
+			})
+		});
+
+		if (!response.ok) {
+			const text = await response.text();
+			throw new Error(`OpenAI 响应错误: ${response.status} ${response.statusText} - ${text}`);
+		}
+
+		const data: any = await response.json();
+		const content: string = data?.choices?.[0]?.message?.content ?? '';
+		const manifest = this.parseManifest(content);
+		if (!manifest) {
+			throw new Error('未能从 OpenAI 响应中解析到有效 JSON 清单');
+		}
+		return manifest;
+	}
+
+	private async generateWithCustomHttp(workflowJson: unknown): Promise<{ files: { path: string; content: string }[] }> {
+		const config = vscode.workspace.getConfiguration('embedded-ai-workflow');
+		const endpoint = String(config.get('ai.http.endpoint', ''));
+		const apiKeyHeader = String(config.get('ai.http.apiKeyHeader', 'Authorization'));
+		const apiKey = String(config.get('ai.http.apiKey', ''));
+		if (!endpoint) {
+			throw new Error('未配置自定义 HTTP 接口地址');
+		}
+
+		const response = await fetch(endpoint, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				...(apiKey ? { [apiKeyHeader]: apiKey } : {})
+			},
+			body: JSON.stringify({ workflow: workflowJson })
+		});
+		if (!response.ok) {
+			const text = await response.text();
+			throw new Error(`HTTP 接口错误: ${response.status} ${response.statusText} - ${text}`);
+		}
+		const data: any = await response.json();
+		if (!data || !Array.isArray(data.files)) {
+			throw new Error('自定义 HTTP 接口未返回有效 files 数组');
+		}
+		return { files: data.files };
+	}
+
+	private parseManifest(content: string): { files: { path: string; content: string }[] } | undefined {
+		try {
+			// 尝试直接解析
+			return JSON.parse(content);
+		} catch {
+			// 尝试从文本中提取第一个 JSON 对象
+			const first = content.indexOf('{');
+			const last = content.lastIndexOf('}');
+			if (first >= 0 && last > first) {
+				const slice = content.slice(first, last + 1);
+				try {
+					return JSON.parse(slice);
+				} catch {
+					return undefined;
+				}
+			}
+			return undefined;
+		}
+	}
+
+	private generateMockManifest(workflowJson: unknown): { files: { path: string; content: string }[] } {
+		const pretty = JSON.stringify(workflowJson, null, 2);
+		const readme = `# Generated by Embedded AI Workflow\n\n此目录包含根据工作流 JSON 生成的示例工程（本地模板，因为未配置 AI 或调用失败）。\n\n## 工作流\n\n\n\n${'```json'}\n${pretty}\n${'```'}\n`;
+		const mainC = [
+			"#include \"stm32f4xx_hal.h\"",
+			"",
+			"void SystemClock_Config(void);",
+			"static void MX_GPIO_Init(void);",
+			"",
+			"int main(void)",
+			"{",
+			"\tHAL_Init();",
+			"\tSystemClock_Config();",
+			"\tMX_GPIO_Init();",
+			"\twhile (1) {",
+			"\t\tHAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);",
+			"\t\tHAL_Delay(500);",
+			"\t}",
+			"\treturn 0;",
+			"}",
+			"",
+			"static void MX_GPIO_Init(void)",
+			"{",
+			"\t__HAL_RCC_GPIOA_CLK_ENABLE();",
+			"\tGPIO_InitTypeDef GPIO_InitStruct = {0};",
+			"\tGPIO_InitStruct.Pin = GPIO_PIN_5;",
+			"\tGPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;",
+			"\tGPIO_InitStruct.Pull = GPIO_NOPULL;",
+			"\tGPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;",
+			"\tHAL_GPIO_Init(GPIOA, &GPIO_InitStruct);",
+			"}",
+			"",
+			"void SystemClock_Config(void) { /* 留空，示例 */ }"
+		].join('\n');
+		const cmake = [
+			"cmake_minimum_required(VERSION 3.12)",
+			"project(embedded_ai_workflow C)",
+			"add_executable(embedded_ai_workflow src/main.c)"
+		].join('\n');
+		return {
+			files: [
+				{ path: 'README.md', content: readme },
+				{ path: 'src/main.c', content: mainC },
+				{ path: 'CMakeLists.txt', content: cmake }
+			]
+		};
+	}
+
+	private async writeGeneratedFiles(manifest: { files: { path: string; content: string }[] }) {
+		const workspaceRoot = this.getWorkspaceFolderUri();
+		if (!workspaceRoot) {
+			throw new Error('没有打开的工作区');
+		}
+		const generatedRoot = vscode.Uri.joinPath(workspaceRoot, 'generated');
+		await vscode.workspace.fs.createDirectory(generatedRoot);
+
+		for (const file of manifest.files) {
+			const safeRel = this.sanitizeRelativePath(file.path);
+			if (!safeRel) {
+				this.postStatus('warn', `跳过非法路径: ${file.path}`);
+				continue;
+			}
+			const segments = safeRel.split('/').filter(Boolean);
+			const dirSegments = segments.slice(0, -1);
+			const targetDir = vscode.Uri.joinPath(generatedRoot, ...dirSegments);
+			await vscode.workspace.fs.createDirectory(targetDir);
+			const targetFile = vscode.Uri.joinPath(generatedRoot, ...segments);
+			await vscode.workspace.fs.writeFile(targetFile, Buffer.from(file.content ?? '', 'utf8'));
+			this.postStatus('info', `已写入: generated/${safeRel}`);
+		}
+	}
+
+	private sanitizeRelativePath(p: string): string | undefined {
+		if (!p || typeof p !== 'string') return undefined;
+		let s = p.replace(/^[\\/]+/, '');
+		if (s.toLowerCase().startsWith('generated/')) {
+			s = s.slice('generated/'.length);
+		}
+		// 标准化为正斜杠
+		s = s.replace(/\\/g, '/');
+		// 阻止目录越界
+		if (s.includes('..')) return undefined;
+		return s;
 	}
 }
 
