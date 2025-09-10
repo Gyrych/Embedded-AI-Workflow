@@ -72,6 +72,26 @@
     "lint": "echo \"No lint configured\"",
     "package": "vsce package"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/embedded-ai-workflow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/embedded-ai-workflow/issues"
+  },
+  "homepage": "https://github.com/your-org/embedded-ai-workflow#readme",
+  "keywords": [
+    "embedded",
+    "stm32",
+    "esp32",
+    "esp-idf",
+    "hal",
+    "mcu",
+    "codegen",
+    "workflow",
+    "vscode-extension",
+    "ai"
+  ],
   "devDependencies": {
     "@types/node": "^18.19.39",
     "@types/vscode": "^1.88.0",
